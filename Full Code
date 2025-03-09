@@ -1,0 +1,2302 @@
+Here are all of the files of the game so hopefully we can continue working on this game in a new chat, Basically I'm building a 2D sandbox game similar to Terraria/Minecraft, featuring a procedurally generated world, mining mechanics, an inventory system, and player movement. The game uses LÖVE2D (Love2D) as its game engine and is written in Lua.
+
+File Structure
+Your game follows a modular architecture with the following directory structure:
+
+/
+├── main.lua                           # Main entry point and game loop
+├── modules/
+│   ├── camera.lua                     # Camera handling (following player, zooming)
+│   ├── player.lua                     # Player entity and movement logic
+│   ├── world.lua                      # World generation and rendering
+│   ├── Items/
+│   │   ├── Item.lua                   # Base Item class
+│   │   └── WoodenPickaxe.lua          # Wooden pickaxe implementation
+│   ├── InventorySystem/
+│   │   ├── InventoryManager.lua       # Central inventory management
+│   │   ├── Hotbar.lua                 # Bottom toolbar for quick access items
+│   │   └── Backpack.lua               # Main inventory interface
+│   ├── Menu/
+│   │   └── MenuSystem.lua             # Game menu handling
+│   ├── debug/
+│   │   └── DebugSystem.lua            # Debug information display
+│   └── systems/
+│       └── MiningSystem.lua           # Mining mechanics
+└── Assets/
+    └── ItemTextures/
+        └── WoodenPickaxe.png          # Texture for wooden pickaxe
+
+Core Systems
+1. World System (modules/world.lua)
+World Generation: Creates a procedurally generated terrain using a seed value
+Tile Management: Handles a 2D grid of tiles (air, grass, dirt, stone)
+Key Methods:
+World.new(width, height, tileSize, seed): Creates a new world
+World:generate(): Generates terrain based on the seed
+World:getTile(x, y): Returns the tile type at a position
+World:setTile(x, y, tileType): Changes a tile at a specific position
+World:findSpawnPosition(): Determines a safe spawn location for the player
+World:draw(camera): Renders visible portions of the world efficiently
+
+2. Player System (modules/player.lua)
+Handles player movement, physics, and collision with the world
+Responds to keyboard input for movement
+Managed by the gravity system for realistic falling
+Key Methods:
+Player.new(x, y, size): Creates a player at position x,y
+Player:update(dt, world): Updates player position based on input and physics
+Player:draw(): Renders the player character
+3. Camera System (modules/camera.lua)
+Manages the view into the game world
+Follows the player and handles zooming
+Transforms screen coordinates to world coordinates and vice versa
+Key Methods:
+Camera.new(): Creates a new camera
+Camera:follow(x, y): Makes camera follow a position
+Camera:zoom(factor): Changes zoom level
+Camera:apply(): Applies camera transformation before rendering
+Camera:reset(): Resets to default view for UI rendering
+4. Inventory System (modules/InventorySystem/)
+InventoryManager (InventoryManager.lua):
+
+Core inventory control system
+Manages items across hotbar and backpack
+Handles item dragging & dropping
+Methods include addItemToHotbar(), isDragging(), getDraggedItem(), etc.
+Hotbar (Hotbar.lua):
+
+Quick-access toolbar at bottom of screen
+Shows selected slot with visual indication
+Keybindings 1-9 to select slots
+Methods include selectSlot(), getSelectedSlot(), getSlotAt(), etc.
+Backpack (Backpack.lua):
+
+Main inventory interface opened with Tab key
+Grid of inventory slots for item storage
+Toggle visibility functionality
+Methods include toggle(), isVisible(), mousepressed(), etc.
+5. Item System (modules/Items/)
+Base Item (Item.lua):
+
+Abstract base class for all items
+Handles properties, description, and rendering
+Store metadata like durability, mining power
+Methods include getProperty(), setProperty(), etc.
+Wooden Pickaxe (WoodenPickaxe.lua):
+
+Mining tool implementation
+Properties: miningPower = 1, durability = 60
+Methods include onUse() for mining interaction
+6. Mining System (modules/systems/MiningSystem.lua)
+Recently implemented system for mining blocks
+Manages mining progress, visualization, and block breaking
+Handles tool durability reduction
+Methods include:
+MiningSystem.new(world, camera, inventoryManager): Creates the system
+startMining(tileX, tileY): Begins mining at a position
+update(dt, hotbarSlot): Updates mining progress
+draw(): Renders mining progress bar and effects
+screenToWorldCoordinates() and worldToTileCoordinates(): Conversion utilities
+7. Debug System (modules/debug/DebugSystem.lua)
+Displays technical information for development
+Toggled with F3 key
+Shows FPS, memory usage, player position, and world info
+Methods include toggle(), update(), draw()
+8. Menu System (modules/Menu/MenuSystem.lua)
+Handles game menus and UI screens
+Manages game state when in menus
+Methods include update(), draw(), keypressed(), etc.
+Game Loop (main.lua)
+The main.lua file serves as the central hub that ties all systems together. It implements:
+
+Love2D Callbacks:
+
+love.load(): Initializes all systems
+love.update(dt): Updates game state (player, camera, mining, etc.)
+love.draw(): Renders the world, UI, and debug info
+Various input handlers (love.keypressed(), love.mousepressed(), etc.)
+Game State Management:
+
+Handles transitions between gameplay and menus
+Controls when mining/interaction is active
+Manages inventory interactions
+Technical Features
+Coordinate Systems
+The game handles three coordinate spaces:
+
+Screen Coordinates: Pixels on the screen (mouse input)
+World Coordinates: Absolute positions in the game world
+Tile Coordinates: Discrete grid positions for blocks
+Conversion between these is handled by utility functions in the MiningSystem.
+
+
+
+
+Here are all the files, I will have the name of the file above and to separate it from the files I'll use three dashes like this ---
+
+Camera.lua
+
+---
+
+local Camera = {}
+Camera.__index = Camera
+
+function Camera.new()
+    local self = setmetatable({}, Camera)
+    self.x = 0
+    self.y = 0
+    self.targetX = 0
+    self.targetY = 0
+    self.scale = 1
+    self.targetScale = 1
+    self.minScale = 0.4
+    self.maxScale = 5
+    self.worldWidth = 0
+    self.worldHeight = 0
+    self.easing = 0.1
+    return self
+end
+
+function Camera:setWorldDimensions(width, height)
+    self.worldWidth = width
+    self.worldHeight = height
+end
+
+function Camera:follow(x, y)
+    local screenWidth, screenHeight = love.graphics.getDimensions()
+    
+    local halfScreenWidth = screenWidth / (2 * self.scale)
+    local halfScreenHeight = screenHeight / (2 * self.scale)
+    
+    local minX = halfScreenWidth
+    local maxX = self.worldWidth - halfScreenWidth
+    local minY = halfScreenHeight
+    local maxY = self.worldHeight - halfScreenHeight
+    
+    self.targetX = math.max(minX, math.min(maxX, x))
+    self.targetY = math.max(minY, math.min(maxY, y))
+    
+    self.x = self.x + (self.targetX - self.x) * self.easing
+    self.y = self.y + (self.targetY - self.y) * self.easing
+end
+
+function Camera:apply()
+    love.graphics.push()
+    love.graphics.scale(self.scale, self.scale)
+    love.graphics.translate(-self.x + love.graphics.getWidth() / (2 * self.scale), 
+                          -self.y + love.graphics.getHeight() / (2 * self.scale))
+end
+
+function Camera:reset()
+    love.graphics.pop()
+end
+
+function Camera:zoom(factor)
+    self.targetScale = math.max(self.minScale, math.min(self.maxScale, self.scale + factor))
+    self.scale = self.scale + (self.targetScale - self.scale) * self.easing
+    
+    local x, y = self.x, self.y
+    self:follow(x, y)
+end
+
+function Camera:update(dt)
+    self.scale = self.scale + (self.targetScale - self.scale) * math.min(1, self.easing * 60 * dt)
+    self.x = self.x + (self.targetX - self.x) * math.min(1, self.easing * 60 * dt)
+    self.y = self.y + (self.targetY - self.y) * math.min(1, self.easing * 60 * dt)
+end
+
+return Camera
+
+---
+
+player.lua
+
+---
+
+local Player = {}
+Player.__index = Player
+
+function Player.new(x, y, size)
+    local self = setmetatable({}, Player)
+    self.x = x or 0
+    self.y = y or 0
+    self.size = size or 30
+    self.vx = 0
+    self.vy = 0
+    self.speed = 260
+    self.acceleration = 1400
+    self.deceleration = 1000
+    self.jumpStrength = 400
+    self.gravity = 800
+    self.grounded = false
+    return self
+end
+
+function Player:checkCollision(x, y, world)
+    local points = {
+        {x, y},
+        {x + self.size, y},
+        {x, y + self.size},
+        {x + self.size, y + self.size}
+    }
+    
+    for _, point in ipairs(points) do
+        if world:isSolid(point[1], point[2]) then
+            return true
+        end
+    end
+    
+    return false
+end
+
+function Player:update(dt, world)
+    self.vy = self.vy + self.gravity * dt
+    
+    if love.keyboard.isDown("a") then
+        self.vx = math.max(-self.speed, self.vx - self.acceleration * dt)
+    elseif love.keyboard.isDown("d") then
+        self.vx = math.min(self.speed, self.vx + self.acceleration * dt)
+    else
+        if self.vx > 0 then
+            self.vx = math.max(0, self.vx - self.deceleration * dt)
+        elseif self.vx < 0 then
+            self.vx = math.min(0, self.vx + self.deceleration * dt)
+        end
+    end
+    
+    if (love.keyboard.isDown("w") or love.keyboard.isDown("space")) and self.grounded then
+        self.vy = -self.jumpStrength
+        self.grounded = false
+    end
+    
+    local nextX = self.x + self.vx * dt
+    local nextY = self.y
+    
+    if not self:checkCollision(nextX, self.y, world) then
+        self.x = nextX
+    else
+        self.vx = 0
+    end
+    
+    nextY = self.y + self.vy * dt
+    
+    if not self:checkCollision(self.x, nextY, world) then
+        self.y = nextY
+        self.grounded = false
+    else
+        if self.vy > 0 then
+            self.grounded = true
+        end
+        self.vy = 0
+        
+        while self:checkCollision(self.x, self.y, world) do
+            if self.vy >= 0 then
+                self.y = self.y - 1
+            else
+                self.y = self.y + 1
+            end
+        end
+    end
+    
+    self.grounded = self:checkCollision(self.x, self.y + 1, world)
+    
+    -- Keep player within world bounds
+    local worldWidth = world.width * world.tileSize
+    local worldHeight = world.height * world.tileSize
+    
+    if self.x < 0 then
+        self.x = 0
+        self.vx = 0
+    elseif self.x + self.size > worldWidth then
+        self.x = worldWidth - self.size
+        self.vx = 0
+    end
+    
+    if self.y < 0 then
+        self.y = 0
+        self.vy = 0
+    elseif self.y + self.size > worldHeight then
+        self.y = worldHeight - self.size
+        self.vy = 0
+        self.grounded = true
+    end
+end
+
+function Player:draw()
+    love.graphics.setColor(1, 1, 1)  -- Pure white color
+    love.graphics.rectangle("fill", self.x, self.y, self.size, self.size)
+    love.graphics.setColor(0.8, 0.8, 0.8)  -- Slightly darker white for outline
+    love.graphics.rectangle("line", self.x, self.y, self.size, self.size)
+end
+
+function Player:getPosition()
+    return self.x, self.y
+end
+
+function Player:getCenter()
+    return self.x + self.size/2, self.y + self.size/2
+end
+
+return Player
+
+---
+
+world.lua
+
+---
+
+local World = {}
+World.__index = World
+
+local BLOCK_AIR = 0
+local BLOCK_GRASS = 1
+local BLOCK_SOIL = 2
+local BLOCK_TRANSITION = 3
+local BLOCK_STONE = 4
+
+local function noise1d(x, seed)
+    x = x * 0.01
+    return math.sin(x * 0.5 + seed) * 0.3 + 
+           math.sin(x * 1.3 + seed*1.7) * 0.1
+end
+
+local function terrain(x, seed)
+    local height = 0.5 + noise1d(x, seed) * 0.05
+    height = height + noise1d(x * 2, seed * 3.5) * 0.01
+    return height
+end
+
+local function isInsideOval(x, y, centerX, centerY, radiusX, radiusY, distortionFactor, noiseSeed)
+    local dx = (x - centerX) / radiusX
+    local dy = (y - centerY) / radiusY
+    
+    local baseCheck = (dx * dx + dy * dy)
+    
+    local angle = math.atan2(dy, dx)
+    local distortion = math.sin(angle * distortionFactor + noiseSeed) * 0.3 + 
+                      math.cos(angle * (distortionFactor * 0.7) + noiseSeed * 1.3) * 0.2
+    
+    return baseCheck <= (1.0 + distortion)
+end
+
+local function clustersOverlap(c1, c2, minDistance)
+    local dx = c1.x - c2.x
+    local dy = c1.y - c2.y
+    local distance = math.sqrt(dx * dx + dy * dy)
+    local combinedRadius = math.max(c1.radiusX, c1.radiusY) + math.max(c2.radiusX, c2.radiusY)
+    
+    return distance < combinedRadius + minDistance
+end
+
+function World.new(width, height, tileSize, seed)
+    local self = setmetatable({}, World)
+    self.width = width or 1000
+    self.height = height or 1000
+    self.tileSize = tileSize or 30
+    self.seed = seed or math.random(1, 1000)
+    self.blocks = {}
+    self.blockColors = {}
+    
+    math.randomseed(self.seed)
+    
+    self:generateTerrain()
+    
+    return self
+end
+
+function World:generateTerrain()
+    self.blocks = {}
+    self.blockColors = {}
+    
+    local terrainHeights = {}
+    for x = 0, self.width - 1 do
+        local normalizedHeight = terrain(x, self.seed)
+        local worldHeight = math.floor(normalizedHeight * self.height)
+        terrainHeights[x] = worldHeight
+    end
+    
+    local stoneClusters = {}
+    local numClusters = math.floor(self.width / 30)
+    local attempts = 0
+    local maxAttempts = 1000
+    
+    while #stoneClusters < numClusters and attempts < maxAttempts do
+        attempts = attempts + 1
+        
+        local clusterX = math.random(0, self.width - 1)
+        local surfaceY = terrainHeights[math.min(clusterX, self.width - 1)]
+        local minDepth = surfaceY + 15
+        local clusterY = math.random(minDepth, math.min(minDepth + 40, self.height - 20))
+        
+        local radiusX = math.random(6, 9)
+        local radiusY = math.random(3, 5)
+        
+        local distortionFactor = math.random(2, 6)
+        local noiseSeed = math.random() * 10
+        
+        local newCluster = {
+            x = clusterX,
+            y = clusterY,
+            radiusX = radiusX,
+            radiusY = radiusY,
+            distortionFactor = distortionFactor,
+            noiseSeed = noiseSeed
+        }
+        
+        local overlaps = false
+        for _, existing in ipairs(stoneClusters) do
+            if clustersOverlap(newCluster, existing, 5) then
+                overlaps = true
+                break
+            end
+        end
+        
+        if not overlaps then
+            table.insert(stoneClusters, newCluster)
+        end
+    end
+    
+    for y = 0, self.height - 1 do
+        self.blocks[y] = {}
+        self.blockColors[y] = {}
+        
+        for x = 0, self.width - 1 do
+            local brightnessVar = 0.92 + math.random() * 0.16
+            
+            if y >= terrainHeights[x] then
+                local isStone = false
+                for _, cluster in ipairs(stoneClusters) do
+                    if isInsideOval(x, y, cluster.x, cluster.y, cluster.radiusX, cluster.radiusY, 
+                                   cluster.distortionFactor, cluster.noiseSeed) then
+                        isStone = true
+                        break
+                    end
+                end
+                
+                if isStone then
+                    self.blocks[y][x] = BLOCK_STONE
+                    self.blockColors[y][x] = {
+                        0.35 * brightnessVar, 
+                        0.35 * brightnessVar, 
+                        0.4 * brightnessVar
+                    }
+                else
+                    if y < terrainHeights[x] + 2 then
+                        self.blocks[y][x] = BLOCK_GRASS
+                        self.blockColors[y][x] = {
+                            0.1 * brightnessVar, 
+                            0.5 * brightnessVar, 
+                            0.1 * brightnessVar
+                        }
+                    elseif y == terrainHeights[x] + 2 then
+                        self.blocks[y][x] = BLOCK_TRANSITION
+                        
+                        if math.random() < 0.5 then
+                            self.blockColors[y][x] = {
+                                (0.1 + 0.3 * math.random()) * brightnessVar, 
+                                (0.3 + 0.2 * math.random()) * brightnessVar, 
+                                0.1 * brightnessVar
+                            }
+                        else
+                            self.blockColors[y][x] = {
+                                0.4 * brightnessVar, 
+                                (0.25 + 0.1 * math.random()) * brightnessVar, 
+                                0.1 * brightnessVar
+                            }
+                        end
+                    else
+                        self.blocks[y][x] = BLOCK_SOIL
+                        self.blockColors[y][x] = {
+                            0.4 * brightnessVar, 
+                            0.25 * brightnessVar, 
+                            0.1 * brightnessVar
+                        }
+                    end
+                end
+            else
+                self.blocks[y][x] = BLOCK_AIR
+                self.blockColors[y][x] = {0, 0, 0}
+            end
+        end
+    end
+end
+
+function World:changeSeed(newSeed)
+    self.seed = newSeed
+    math.randomseed(self.seed)
+    self:generateTerrain()
+end
+
+function World:getBlock(x, y)
+    if x < 0 or x >= self.width or y < 0 or y >= self.height then
+        return BLOCK_AIR
+    end
+    
+    if self.blocks[y] and self.blocks[y][x] ~= nil then
+        return self.blocks[y][x]
+    end
+    return BLOCK_AIR
+end
+
+function World:isSolid(x, y)
+    local tileX = math.floor(x / self.tileSize)
+    local tileY = math.floor(y / self.tileSize)
+    return self:getBlock(tileX, tileY) ~= BLOCK_AIR
+end
+
+function World:mineBlock(x, y)
+    local tileX = math.floor(x / self.tileSize)
+    local tileY = math.floor(y / self.tileSize)
+    
+    if tileX >= 0 and tileX < self.width and tileY >= 0 and tileY < self.height then
+        local blockType = self.blocks[tileY][tileX]
+        if blockType ~= BLOCK_AIR then
+            self.blocks[tileY][tileX] = BLOCK_AIR
+            return blockType
+        end
+    end
+    
+    return BLOCK_AIR
+end
+
+function World:findSpawnPosition()
+    local startX = math.floor(self.width / 2)
+    
+    for y = 0, self.height - 1 do
+        if self:getBlock(startX, y) ~= BLOCK_AIR and self:getBlock(startX, y-1) == BLOCK_AIR then
+            return startX * self.tileSize, (y - 1) * self.tileSize
+        end
+    end
+    
+    return startX * self.tileSize, 0
+end
+
+function World:draw(camera)
+    local screenWidth, screenHeight = love.graphics.getDimensions()
+    
+    local viewLeft = camera.x - (screenWidth / (2 * camera.scale))
+    local viewRight = camera.x + (screenWidth / (2 * camera.scale))
+    local viewTop = camera.y - (screenHeight / (2 * camera.scale))
+    local viewBottom = camera.y + (screenHeight / (2 * camera.scale))
+    
+    local startX = math.floor(viewLeft / self.tileSize) - 1
+    local endX = math.ceil(viewRight / self.tileSize) + 1
+    local startY = math.floor(viewTop / self.tileSize) - 1
+    local endY = math.ceil(viewBottom / self.tileSize) + 1
+    
+    startX = math.max(0, startX)
+    endX = math.min(self.width - 1, endX)
+    startY = math.max(0, startY)
+    endY = math.min(self.height - 1, endY)
+    
+    for y = startY, endY do
+        for x = startX, endX do
+            if self:getBlock(x, y) ~= BLOCK_AIR then
+                local color = self.blockColors[y][x]
+                love.graphics.setColor(color[1], color[2], color[3])
+                love.graphics.rectangle("fill", x * self.tileSize, y * self.tileSize, 
+                                       self.tileSize, self.tileSize)
+                
+                love.graphics.setColor(color[1] * 0.7, color[2] * 0.7, color[3] * 0.7)
+                love.graphics.rectangle("line", x * self.tileSize, y * self.tileSize, 
+                                       self.tileSize, self.tileSize)
+            end
+        end
+    end
+end
+
+function World:getBlockName(blockType)
+    if blockType == BLOCK_AIR then return "air"
+    elseif blockType == BLOCK_GRASS then return "grass"
+    elseif blockType == BLOCK_SOIL then return "soil"
+    elseif blockType == BLOCK_TRANSITION then return "transition"
+    elseif blockType == BLOCK_STONE then return "stone"
+    else return "unknown" end
+end
+
+return World
+
+---
+
+Folder Systems, File miningsystem.lua
+
+---
+
+local MiningSystem = {}
+
+function MiningSystem.new(world, camera, inventoryManager)
+    local self = {}
+    
+    self.world = world
+    self.camera = camera
+    self.inventoryManager = inventoryManager
+    
+    self.active = false
+    self.progress = 0
+    self.tileX = nil
+    self.tileY = nil
+    self.blockType = nil
+    self.baseSpeed = 1
+    self.breakTime = 1.0
+    
+    function self:reset()
+        self.active = false
+        self.progress = 0
+        self.tileX = nil
+        self.tileY = nil
+        self.blockType = nil
+    end
+    
+    function self:startMining(tx, ty)
+        if not tx or not ty or not self.world then return end
+        
+        -- Check if world has getTile method
+        if not self.world.getTile or type(self.world.getTile) ~= "function" then
+            print("Warning: World object does not have a valid getTile method")
+            return
+        end
+        
+        if tx >= 0 and tx < self.world.width and ty >= 0 and ty < self.world.height then
+            local success, tileType = pcall(function() return self.world:getTile(tx, ty) end)
+            
+            if not success then
+                print("Error getting tile: ", tileType)
+                return
+            end
+            
+            if tileType and tileType ~= 0 then
+                if not self.active or self.tileX ~= tx or self.tileY ~= ty then
+                    self.progress = 0
+                    self.tileX = tx
+                    self.tileY = ty
+                    self.blockType = tileType
+                    self.active = true
+                end
+            else
+                self:reset()
+            end
+        else
+            self:reset()
+        end
+    end
+    
+    function self:update(dt, hotbarSlot)
+        if not self.active then return end
+        
+        local selectedItem = self.inventoryManager:getHotbarItem(hotbarSlot)
+        
+        local miningPower = 1
+        if selectedItem and selectedItem.getProperty and selectedItem:getProperty("miningPower") then
+            miningPower = selectedItem:getProperty("miningPower")
+        end
+        
+        self.progress = self.progress + (dt * miningPower * self.baseSpeed)
+        
+        if self.progress >= self.breakTime then
+            if self.world and self.world.setTile and type(self.world.setTile) == "function" then
+                pcall(function() self.world:setTile(self.tileX, self.tileY, 0) end)
+            end
+            
+            self:reset()
+            
+            if selectedItem and selectedItem.getProperty and selectedItem:getProperty("durability") then
+                local durability = selectedItem:getProperty("durability")
+                if durability > 0 then
+                    selectedItem:setProperty("durability", durability - 1)
+                    
+                    if durability - 1 <= 0 then
+                        self.inventoryManager.hotbarSlots[hotbarSlot] = nil
+                    end
+                end
+            end
+        end
+    end
+    
+    function self:draw()
+        if not self.active then return end
+        
+        local x = self.tileX * self.world.tileSize
+        local y = self.tileY * self.world.tileSize
+        
+        love.graphics.setColor(1, 1, 1, self.progress / self.breakTime)
+        love.graphics.rectangle("line", x, y, self.world.tileSize, self.world.tileSize, 2, 2)
+        
+        local barWidth = self.world.tileSize * 0.8
+        local barHeight = 5
+        local barX = x + (self.world.tileSize - barWidth) / 2
+        local barY = y - barHeight - 2
+        
+        love.graphics.setColor(0, 0, 0, 0.7)
+        love.graphics.rectangle("fill", barX, barY, barWidth, barHeight, 2, 2)
+        
+        love.graphics.setColor(0.3, 1, 0.3, 0.8)
+        love.graphics.rectangle("fill", barX, barY, barWidth * (self.progress / self.breakTime), barHeight, 2, 2)
+    end
+    
+    function self:screenToWorldCoordinates(screenX, screenY)
+        local worldX = (screenX / self.camera.scale) + self.camera.x
+        local worldY = (screenY / self.camera.scale) + self.camera.y
+        return worldX, worldY
+    end
+    
+    function self:worldToTileCoordinates(worldX, worldY)
+        local tileX = math.floor(worldX / self.world.tileSize)
+        local tileY = math.floor(worldY / self.world.tileSize)
+        return tileX, tileY
+    end
+    
+    return self
+end
+
+return MiningSystem
+
+---
+
+Folder menu
+
+---
+
+Button.lua
+
+---
+
+local Button = {}
+Button.__index = Button
+
+function Button.new(text, x, y, width, height, action, fontSize)
+    local self = setmetatable({}, Button)
+    self.text = text:upper()
+    self.x = x
+    self.y = y
+    self.width = width
+    self.height = height
+    self.action = action
+    self.fontSize = fontSize or 24
+    self.hovered = false
+    return self
+end
+
+function Button:update(mouseX, mouseY)
+    self.hovered = mouseX >= self.x and mouseX <= self.x + self.width and
+                   mouseY >= self.y and mouseY <= self.y + self.height
+    return self.hovered
+end
+
+function Button:draw(font)
+    -- Background with highlight if hovered
+    if self.hovered then
+        love.graphics.setColor(0.4, 0.4, 0.4, 0.9)
+    else
+        love.graphics.setColor(0.2, 0.2, 0.2, 0.8)
+    end
+    love.graphics.rectangle("fill", self.x, self.y, self.width, self.height, 8, 8)
+    
+    -- Border
+    love.graphics.setColor(1, 1, 1, 0.8)
+    love.graphics.rectangle("line", self.x, self.y, self.width, self.height, 8, 8)
+    
+    -- Text
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(font)
+    
+    local textWidth = font:getWidth(self.text)
+    local textHeight = font:getHeight()
+    local textX = self.x + (self.width - textWidth) / 2
+    local textY = self.y + (self.height - textHeight) / 2
+    
+    love.graphics.print(self.text, textX, textY)
+end
+
+function Button:click()
+    if self.hovered and self.action then
+        self.action()
+        return true
+    end
+    return false
+end
+
+return Button
+
+---
+
+MenuSystem.lua
+
+---
+
+local MenuSystem = {}
+MenuSystem.__index = MenuSystem
+
+local PauseMenu = require("modules.Menu.PauseMenu")
+local OptionsMenu = require("modules.Menu.OptionsMenu")
+
+function MenuSystem.new(game)
+    local self = setmetatable({}, MenuSystem)
+    self.game = game
+    self.active = false
+    self.currentMenu = nil
+    self.menus = {
+        pause = PauseMenu.new(self),
+        options = OptionsMenu.new(self)
+    }
+    
+    -- Load font
+    self.font = love.graphics.newFont("Assets/Fonts/MenuFont.ttf", 24)
+    
+    return self
+end
+
+function MenuSystem:toggle()
+    self.active = not self.active
+    
+    if self.active then
+        self:setMenu("pause")
+    else
+        self.currentMenu = nil
+    end
+    
+    return self.active
+end
+
+function MenuSystem:setMenu(menuName)
+    self.currentMenu = self.menus[menuName]
+    if self.currentMenu then
+        self.currentMenu:init()
+    end
+end
+
+function MenuSystem:update(dt)
+    if not self.active or not self.currentMenu then return end
+    self.currentMenu:update(dt)
+end
+
+function MenuSystem:draw()
+    if not self.active or not self.currentMenu then return end
+    
+    -- Dim background
+    love.graphics.setColor(0, 0, 0, 0.7)
+    love.graphics.rectangle("fill", 0, 0, love.graphics.getWidth(), love.graphics.getHeight())
+    
+    -- Draw current menu
+    self.currentMenu:draw(self.font)
+end
+
+function MenuSystem:mousepressed(x, y, button)
+    if not self.active or not self.currentMenu then return false end
+    return self.currentMenu:mousepressed(x, y, button)
+end
+
+function MenuSystem:mousereleased(x, y, button)
+    if not self.active or not self.currentMenu then return false end
+    return self.currentMenu:mousereleased(x, y, button)
+end
+
+function MenuSystem:keypressed(key)
+    if key == "escape" then
+        return self:toggle()
+    end
+    
+    if not self.active or not self.currentMenu then return false end
+    return self.currentMenu:keypressed(key)
+end
+
+function MenuSystem:returnToGame()
+    self.active = false
+    self.currentMenu = nil
+end
+
+function MenuSystem:quitGame()
+    love.event.quit()
+end
+
+function MenuSystem:getFpsLimit()
+    return self.menus.options.settings.fpsLimit
+end
+
+return MenuSystem
+
+---
+
+OptionsMenu.lua
+
+---
+
+local OptionsMenu = {}
+OptionsMenu.__index = OptionsMenu
+
+local Button = require("modules.Menu.Button")
+
+function OptionsMenu.new(menuSystem)
+    local self = setmetatable({}, OptionsMenu)
+    self.menuSystem = menuSystem
+    self.buttons = {}
+    
+    -- Empty settings object
+    self.settings = {}
+    
+    return self
+end
+
+function OptionsMenu:init()
+    self.buttons = {}
+    
+    local screenWidth, screenHeight = love.graphics.getDimensions()
+    local buttonWidth = 200
+    local buttonHeight = 50
+    
+    -- Back button
+    table.insert(self.buttons, Button.new(
+        "BACK",
+        screenWidth / 2 - buttonWidth / 2,
+        screenHeight * 0.7,
+        buttonWidth,
+        buttonHeight,
+        function() self.menuSystem:setMenu("pause") end
+    ))
+end
+
+function OptionsMenu:saveSettings()
+    -- No settings to save anymore
+end
+
+function OptionsMenu:update(dt)
+    local mouseX, mouseY = love.mouse.getPosition()
+    
+    -- Update buttons
+    for _, button in ipairs(self.buttons) do
+        button:update(mouseX, mouseY)
+    end
+end
+
+function OptionsMenu:draw(font)
+    -- Title
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(font)
+    local title = "OPTIONS"
+    local titleWidth = font:getWidth(title)
+    love.graphics.print(title, love.graphics.getWidth() / 2 - titleWidth / 2, love.graphics.getHeight() / 3)
+    
+    -- Placeholder text
+    local message = "Options will be available in the future"
+    local messageWidth = font:getWidth(message)
+    love.graphics.print(message, love.graphics.getWidth() / 2 - messageWidth / 2, love.graphics.getHeight() / 2)
+    
+    -- Buttons
+    for _, button in ipairs(self.buttons) do
+        button:draw(font)
+    end
+end
+
+function OptionsMenu:mousepressed(x, y, button)
+    if button == 1 then  -- Left mouse button
+        for _, btn in ipairs(self.buttons) do
+            if btn:update(x, y) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function OptionsMenu:mousereleased(x, y, button)
+    if button == 1 then  -- Left mouse button
+        for _, btn in ipairs(self.buttons) do
+            if btn:click() then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function OptionsMenu:keypressed(key)
+    if key == "escape" then
+        self.menuSystem:setMenu("pause")
+        return true
+    end
+    return false
+end
+
+return OptionsMenu
+
+---
+
+PauseMenu.lua
+
+---
+
+local PauseMenu = {}
+PauseMenu.__index = PauseMenu
+
+local Button = require("modules.Menu.Button")
+
+function PauseMenu.new(menuSystem)
+    local self = setmetatable({}, PauseMenu)
+    self.menuSystem = menuSystem
+    self.buttons = {}
+    return self
+end
+
+function PauseMenu:init()
+    self.buttons = {}
+    
+    local screenWidth, screenHeight = love.graphics.getDimensions()
+    local buttonWidth = 200
+    local buttonHeight = 50
+    local buttonSpacing = 20
+    local startY = screenHeight / 2 - buttonHeight - buttonSpacing/2
+    
+    -- Options button
+    table.insert(self.buttons, Button.new(
+        "OPTIONS",
+        screenWidth / 2 - buttonWidth / 2,
+        startY,
+        buttonWidth,
+        buttonHeight,
+        function() self.menuSystem:setMenu("options") end
+    ))
+    
+    -- Quit button
+    table.insert(self.buttons, Button.new(
+        "QUIT",
+        screenWidth / 2 - buttonWidth / 2,
+        startY + buttonHeight + buttonSpacing,
+        buttonWidth,
+        buttonHeight,
+        function() self.menuSystem:quitGame() end
+    ))
+end
+
+function PauseMenu:update(dt)
+    local mouseX, mouseY = love.mouse.getPosition()
+    for _, button in ipairs(self.buttons) do
+        button:update(mouseX, mouseY)
+    end
+end
+
+function PauseMenu:draw(font)
+    -- Title
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.setFont(font)
+    local title = "PAUSED"
+    local titleWidth = font:getWidth(title)
+    love.graphics.print(title, love.graphics.getWidth() / 2 - titleWidth / 2, love.graphics.getHeight() / 3)
+    
+    -- Buttons
+    for _, button in ipairs(self.buttons) do
+        button:draw(font)
+    end
+end
+
+function PauseMenu:mousepressed(x, y, button)
+    if button == 1 then  -- Left mouse button
+        for _, btn in ipairs(self.buttons) do
+            if btn:update(x, y) then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function PauseMenu:mousereleased(x, y, button)
+    if button == 1 then  -- Left mouse button
+        for _, btn in ipairs(self.buttons) do
+            if btn:click() then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+function PauseMenu:keypressed(key)
+    if key == "escape" then
+        self.menuSystem:returnToGame()
+        return true
+    end
+    return false
+end
+
+return PauseMenu
+
+---
+
+items folder
+
+---
+
+item.lua
+
+---
+
+local Item = {}
+Item.__index = Item
+
+function Item.new(name, texture, stackable, maxStack)
+    local self = setmetatable({}, Item)
+    self.name = name or "Unknown Item"
+    self.description = "No description available"
+    self.texture = texture and love.graphics.newImage(texture) or nil
+    self.stackable = stackable or false
+    self.maxStack = maxStack or 1
+    self.count = 1
+    self.properties = {}
+    
+    return self
+end
+
+function Item:getName()
+    return self.name
+end
+
+function Item:getDescription()
+    return self.description
+end
+
+function Item:setDescription(desc)
+    self.description = desc
+    return self
+end
+
+function Item:getTexture()
+    return self.texture
+end
+
+function Item:setProperty(key, value)
+    self.properties[key] = value
+    return self
+end
+
+function Item:getProperty(key)
+    return self.properties[key]
+end
+
+function Item:draw(x, y, size, alpha)
+    alpha = alpha or 1
+    
+    if self.texture then
+        love.graphics.setColor(1, 1, 1, alpha)
+        
+        -- Calculate scale to fit the slot
+        local texWidth, texHeight = self.texture:getDimensions()
+        local scale = math.min((size * 0.8) / texWidth, (size * 0.8) / texHeight)
+        
+        -- Center the texture in the slot
+        local drawX = x + (size - texWidth * scale) / 2
+        local drawY = y + (size - texHeight * scale) / 2
+        
+        love.graphics.draw(self.texture, drawX, drawY, 0, scale, scale)
+        
+        -- If stackable and count > 1, show count
+        if self.stackable and self.count > 1 then
+            love.graphics.setColor(1, 1, 1, alpha)
+            love.graphics.print(tostring(self.count), x + size * 0.7, y + size * 0.7)
+        end
+    else
+        -- Fallback if no texture
+        love.graphics.setColor(0.5, 0.5, 0.5, alpha)
+        love.graphics.rectangle("fill", x + size * 0.1, y + size * 0.1, size * 0.8, size * 0.8)
+    end
+    
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+return Item
+
+---
+
+woodenpickaxe.lua
+
+---
+
+local Item = require("modules.Items.Item")
+
+local WoodenPickaxe = {}
+WoodenPickaxe.__index = WoodenPickaxe
+setmetatable(WoodenPickaxe, {__index = Item}) -- Inherit from Item
+
+function WoodenPickaxe.new()
+    local self = setmetatable(Item.new("Wooden Pickaxe", "Assets/ItemTextures/WoodenPickaxe.png", false), WoodenPickaxe)
+    
+    self:setDescription("A basic wooden pickaxe.")
+    self:setProperty("miningPower", 1)
+    self:setProperty("durability", 60)
+    self:setProperty("maxDurability", 60)
+    
+    return self
+end
+
+-- Override or add specific methods for the wooden pickaxe
+function WoodenPickaxe:onUse(world, x, y)
+    -- Mining logic would go here
+    local durability = self:getProperty("durability")
+    if durability > 0 then
+        self:setProperty("durability", durability - 1)
+    end
+    
+    -- Return true if the item was used successfully
+    return true
+end
+
+return WoodenPickaxe
+
+---
+
+folder InventorySystem
+
+---
+
+backpack.lua
+
+---
+
+local Backpack = {}
+Backpack.__index = Backpack
+
+function Backpack.new(inventoryManager)
+    local self = setmetatable({}, Backpack)
+    
+    self.cols = 2
+    self.rows = 10
+    self.visible = false
+    self.slotSize = 75
+    self.padding = 12
+    self.inventoryManager = inventoryManager
+    
+    -- Position at top right
+    self.baseX = love.graphics.getWidth() - (self.cols * self.slotSize + (self.cols - 1) * self.padding) - 20
+    self.baseY = 20
+    
+    self.hoverSlot = nil
+    self.targetScale = {}
+    self.currentScale = {}
+    self.alpha = {}
+    
+    -- Initialize all slots with default scale
+    for i = 1, self.cols * self.rows do
+        self.targetScale[i] = 1.0
+        self.currentScale[i] = 0.0  -- Start at 0 for animation
+        self.alpha[i] = 0.0         -- Start fully transparent
+    end
+    
+    -- Animation properties
+    self.animating = false
+    self.closing = false
+    self.animationTimer = 0
+    self.animationSpeed = 0.05      -- Time between row animations
+    self.popInSpeed = 15            -- How fast slots pop in
+    self.fadeInSpeed = 15           -- How fast slots fade in
+    
+    return self
+end
+
+function Backpack:update(dt)
+    if not self.visible and not self.closing then return end
+    
+    -- Update position if window size changes
+    self.baseX = love.graphics.getWidth() - (self.cols * self.slotSize + (self.cols - 1) * self.padding) - 20
+    
+    -- Handle pop-in animation
+    if self.animating and not self.closing then
+        self.animationTimer = self.animationTimer + dt
+        
+        local currentRow = math.floor(self.animationTimer / self.animationSpeed) + 1
+        if currentRow <= self.rows then
+            -- Animate current row
+            for col = 1, self.cols do
+                local index = (currentRow - 1) * self.cols + col
+                self.targetScale[index] = 1.0
+            end
+        else
+            self.animating = false
+        end
+    end
+    
+    -- Handle closing animation
+    if self.closing then
+        self.animationTimer = self.animationTimer + dt
+        
+        local currentRow = math.floor(self.animationTimer / self.animationSpeed) + 1
+        if currentRow <= self.rows then
+            -- Animate current row (from bottom to top)
+            local reverseRow = self.rows - currentRow + 1
+            for col = 1, self.cols do
+                local index = (reverseRow - 1) * self.cols + col
+                self.targetScale[index] = 0.0
+                -- This will trigger fade out as well
+            end
+        else
+            -- Animation complete, fully close
+            self.closing = false
+            self.visible = false
+            -- Reset all slots to initial state
+            for i = 1, self.cols * self.rows do
+                self.currentScale[i] = 0.0
+                self.alpha[i] = 0.0
+            end
+        end
+    end
+    
+    -- Update hover state only if not animating
+    if not self.animating and not self.closing then
+        local mx, my = love.mouse.getPosition()
+        local hovering = self:getSlotAt(mx, my)
+        
+        if hovering ~= self.hoverSlot then
+            -- Reset all slots to normal scale
+            for i = 1, self.cols * self.rows do
+                if self.alpha[i] > 0 then  -- Only reset visible slots
+                    self.targetScale[i] = 1.0
+                end
+            end
+            
+            -- Set new hover slot to larger scale
+            if hovering then
+                self.targetScale[hovering] = 1.2
+            end
+            
+            self.hoverSlot = hovering
+        end
+    end
+    
+    -- Smooth animation for all slots
+    for i = 1, self.cols * self.rows do
+        -- Update scale
+        local scaleDiff = self.targetScale[i] - self.currentScale[i]
+        self.currentScale[i] = self.currentScale[i] + scaleDiff * self.popInSpeed * dt
+        
+        -- Update alpha based on scale
+        if self.targetScale[i] > 0 then
+            -- Fade in
+            self.alpha[i] = math.min(1.0, self.alpha[i] + self.fadeInSpeed * dt)
+        else
+            -- Fade out
+            self.alpha[i] = math.max(0.0, self.alpha[i] - self.fadeInSpeed * dt)
+        end
+    end
+end
+
+function Backpack:getSlotAt(x, y)
+    if not self.visible or self.animating or self.closing then return nil end
+    
+    for row = 0, self.rows - 1 do
+        for col = 0, self.cols - 1 do
+            local index = row * self.cols + col + 1
+            
+            -- Only check visible slots
+            if self.alpha[index] > 0.5 then
+                local slotX = self.baseX + col * (self.slotSize + self.padding)
+                local slotY = self.baseY + row * (self.slotSize + self.padding)
+                
+                -- Apply current scale to calculate actual slot position and size
+                local scale = self.currentScale[index]
+                local scaledSize = self.slotSize * scale
+                local adjustedX = slotX + (self.slotSize - scaledSize) / 2
+                local adjustedY = slotY + (self.slotSize - scaledSize) / 2
+                
+                -- Check if mouse is within this slot
+                if x >= adjustedX and x <= adjustedX + scaledSize and
+                   y >= adjustedY and y <= adjustedY + scaledSize then
+                    return index
+                end
+            end
+        end
+    end
+    
+    return nil
+end
+
+function Backpack:toggle()
+    if self.visible and not self.closing then
+        -- Start closing animation
+        self.closing = true
+        self.animating = false
+        self.animationTimer = 0
+        self.hoverSlot = nil
+        
+        -- Don't set visible to false yet, wait for animation
+        return false
+    elseif not self.visible and not self.closing then
+        -- Open backpack with animation
+        self.visible = true
+        self.closing = false
+        self.animating = true
+        self.animationTimer = 0
+        self.hoverSlot = nil
+        
+        -- Reset all slots
+        for i = 1, self.cols * self.rows do
+            self.targetScale[i] = 0.0
+            self.currentScale[i] = 0.0
+            self.alpha[i] = 0.0
+        end
+        
+        return true
+    end
+    
+    -- If we're in the middle of an animation, don't change state
+    return self.visible
+end
+
+function Backpack:draw()
+    if not self.visible and not self.closing then return end
+    
+    for row = 0, self.rows - 1 do
+        for col = 0, self.cols - 1 do
+            local index = row * self.cols + col + 1
+            local alpha = self.alpha[index]
+            
+            -- Only draw visible slots
+            if alpha > 0 then
+                local scale = self.currentScale[index]
+                local scaledSize = self.slotSize * scale
+                
+                local x = self.baseX + col * (self.slotSize + self.padding)
+                local y = self.baseY + row * (self.slotSize + self.padding)
+                
+                local adjustedX = x + (self.slotSize - scaledSize) / 2
+                local adjustedY = y + (self.slotSize - scaledSize) / 2
+                
+                -- Draw slot background
+                love.graphics.setColor(0, 0, 0, 0.5 * alpha)
+                love.graphics.rectangle("fill", adjustedX, adjustedY, scaledSize, scaledSize, 3, 3)
+                
+                -- Draw slot border
+                love.graphics.setColor(0.7, 0.7, 0.7, 0.7 * alpha)
+                love.graphics.rectangle("line", adjustedX, adjustedY, scaledSize, scaledSize, 3, 3)
+                
+                -- Draw item if there is one
+                local item = self.inventoryManager:getBackpackItem(index)
+                if item then
+                    item:draw(adjustedX, adjustedY, scaledSize, alpha)
+                end
+            end
+        end
+    end
+    
+    love.graphics.setColor(1, 1, 1, 1)
+    
+    -- Draw item being dragged if applicable
+    if self.inventoryManager:isDragging() then
+        local mx, my = love.mouse.getPosition()
+        local draggedItem = self.inventoryManager:getDraggedItem()
+        if draggedItem then
+            draggedItem:draw(mx - self.slotSize/2, my - self.slotSize/2, self.slotSize, 0.8)
+        end
+    end
+end
+
+function Backpack:mousepressed(x, y, button)
+    if not self.visible or self.animating or self.closing then return false end
+    
+    if button == 1 then  -- Left mouse button
+        local slotIndex = self:getSlotAt(x, y)
+        if slotIndex then
+            -- Start dragging from backpack
+            return self.inventoryManager:startDragging("backpack", slotIndex)
+        end
+    end
+    
+    return false
+end
+
+function Backpack:mousereleased(x, y, button)
+    if not self.visible then return false end
+    
+    if button == 1 and self.inventoryManager:isDragging() then  -- Left mouse button
+        local slotIndex = self:getSlotAt(x, y)
+        if slotIndex then
+            -- Drop on backpack slot
+            return self.inventoryManager:endDragging("backpack", slotIndex)
+        end
+    end
+    
+    return false
+end
+
+function Backpack:isVisible()
+    return self.visible or self.closing
+end
+
+return Backpack
+
+---
+
+hotbar.lua
+
+---
+
+local Hotbar = {}
+Hotbar.__index = Hotbar
+
+function Hotbar.new(inventoryManager)
+    local self = setmetatable({}, Hotbar)
+    self.slots = 9
+    self.selectedSlot = 1
+    self.targetScale = {}
+    self.currentScale = {}
+    self.inventoryManager = inventoryManager
+    
+    for i = 1, self.slots do
+        self.targetScale[i] = 1.0
+        self.currentScale[i] = 1.0
+    end
+    
+    self.targetScale[self.selectedSlot] = 1.2
+    
+    self.slotSize = 75
+    self.padding = 12
+    self.baseX = 20
+    self.baseY = 20
+    
+    self.font = love.graphics.newFont("Assets/Fonts/HotbarText.ttf", 22)
+    
+    return self
+end
+
+function Hotbar:update(dt)
+    for i = 1, self.slots do
+        local diff = self.targetScale[i] - self.currentScale[i]
+        self.currentScale[i] = self.currentScale[i] + diff * 10 * dt
+    end
+end
+
+function Hotbar:selectSlot(slot)
+    if slot < 1 or slot > self.slots then return end
+    
+    self.selectedSlot = slot
+    
+    for i = 1, self.slots do
+        self.targetScale[i] = 1.0
+    end
+    
+    self.targetScale[slot] = 1.2
+end
+
+function Hotbar:getSelectedSlot()
+    return self.selectedSlot
+end
+
+function Hotbar:getSlotAt(x, y)
+    for i = 1, self.slots do
+        local scale = self.currentScale[i]
+        local scaledSize = self.slotSize * scale
+        local slotX = self.baseX + (i-1) * (self.slotSize + self.padding)
+        local slotY = self.baseY
+        
+        local adjustedX = slotX + (self.slotSize - scaledSize) / 2
+        local adjustedY = slotY + (self.slotSize - scaledSize) / 2
+        
+        if x >= adjustedX and x <= adjustedX + scaledSize and
+           y >= adjustedY and y <= adjustedY + scaledSize then
+            return i
+        end
+    end
+    return nil
+end
+
+function Hotbar:draw()
+    love.graphics.setFont(self.font)
+    
+    for i = 1, self.slots do
+        local scale = self.currentScale[i]
+        local scaledSize = self.slotSize * scale
+        local x = self.baseX + (i-1) * (self.slotSize + self.padding)
+        local y = self.baseY
+        
+        local adjustedX = x + (self.slotSize - scaledSize) / 2
+        local adjustedY = y + (self.slotSize - scaledSize) / 2
+        
+        -- Draw slot background
+        love.graphics.setColor(0, 0, 0, 0.5)
+        love.graphics.rectangle("fill", adjustedX, adjustedY, scaledSize, scaledSize, 3, 3)
+        
+        -- Draw slot border
+        love.graphics.setColor(0.7, 0.7, 0.7, 0.7)
+        love.graphics.rectangle("line", adjustedX, adjustedY, scaledSize, scaledSize, 3, 3)
+        
+        -- Draw item if there is one
+        local item = self.inventoryManager:getHotbarItem(i)
+        if item then
+            item:draw(adjustedX, adjustedY, scaledSize)
+        end
+        
+        local numText = tostring(i)
+        local textWidth = self.font:getWidth(numText)
+        local textHeight = self.font:getHeight()
+        
+        local textX = adjustedX + scaledSize/2 - textWidth/2
+        local textY = adjustedY + scaledSize + 5
+        
+        -- Shadow effect for the number
+        love.graphics.setColor(0, 0, 0, 0.5)
+        love.graphics.print(numText, textX + 1, textY + 1)
+        
+        -- Number text
+        love.graphics.setColor(1, 1, 1, 0.9)
+        love.graphics.print(numText, textX, textY)
+    end
+    
+    love.graphics.setColor(1, 1, 1, 1)
+end
+
+return Hotbar
+
+---
+
+inventorymanager.lua
+
+---
+
+local InventoryManager = {}
+InventoryManager.__index = InventoryManager
+
+function InventoryManager.new()
+    local self = setmetatable({}, InventoryManager)
+    
+    -- Initialize slots for hotbar and backpack
+    self.hotbarSlots = {}
+    self.backpackSlots = {}
+    
+    -- Dimensions
+    self.hotbarSize = 9
+    self.backpackCols = 2
+    self.backpackRows = 10
+    
+    -- Item being dragged
+    self.draggedItem = nil
+    self.dragOrigin = nil  -- "hotbar" or "backpack"
+    self.dragSlot = nil
+    
+    -- Initialize empty slots
+    for i = 1, self.hotbarSize do
+        self.hotbarSlots[i] = nil
+    end
+    
+    for i = 1, self.backpackCols * self.backpackRows do
+        self.backpackSlots[i] = nil
+    end
+    
+    return self
+end
+
+function InventoryManager:addItemToHotbar(item, slot)
+    if slot > 0 and slot <= self.hotbarSize then
+        self.hotbarSlots[slot] = item
+        return true
+    end
+    return false
+end
+
+function InventoryManager:addItemToBackpack(item, slot)
+    if slot > 0 and slot <= self.backpackCols * self.backpackRows then
+        self.backpackSlots[slot] = item
+        return true
+    end
+    return false
+end
+
+function InventoryManager:getHotbarItem(slot)
+    if slot > 0 and slot <= self.hotbarSize then
+        return self.hotbarSlots[slot]
+    end
+    return nil
+end
+
+function InventoryManager:getBackpackItem(slot)
+    if slot > 0 and slot <= self.backpackCols * self.backpackRows then
+        return self.backpackSlots[slot]
+    end
+    return nil
+end
+
+function InventoryManager:startDragging(origin, slot)
+    local item = nil
+    
+    if origin == "hotbar" then
+        item = self.hotbarSlots[slot]
+        self.hotbarSlots[slot] = nil
+    elseif origin == "backpack" then
+        item = self.backpackSlots[slot]
+        self.backpackSlots[slot] = nil
+    end
+    
+    if item then
+        self.draggedItem = item
+        self.dragOrigin = origin
+        self.dragSlot = slot
+        return true
+    end
+    
+    return false
+end
+
+function InventoryManager:endDragging(target, slot)
+    if not self.draggedItem then return false end
+    
+    local targetItem = nil
+    
+    -- Get the item (if any) at the target slot
+    if target == "hotbar" then
+        targetItem = self.hotbarSlots[slot]
+    elseif target == "backpack" then
+        targetItem = self.backpackSlots[slot]
+    end
+    
+    -- Swap items
+    if target == "hotbar" then
+        self.hotbarSlots[slot] = self.draggedItem
+    elseif target == "backpack" then
+        self.backpackSlots[slot] = self.draggedItem
+    end
+    
+    -- Place the target item back to origin if there was one
+    if targetItem then
+        if self.dragOrigin == "hotbar" then
+            self.hotbarSlots[self.dragSlot] = targetItem
+        elseif self.dragOrigin == "backpack" then
+            self.backpackSlots[self.dragSlot] = targetItem
+        end
+    end
+    
+    -- Clear dragged state
+    self.draggedItem = nil
+    self.dragOrigin = nil
+    self.dragSlot = nil
+    
+    return true
+end
+
+function InventoryManager:cancelDragging()
+    if not self.draggedItem then return false end
+    
+    -- Return item to original slot
+    if self.dragOrigin == "hotbar" then
+        self.hotbarSlots[self.dragSlot] = self.draggedItem
+    elseif self.dragOrigin == "backpack" then
+        self.backpackSlots[self.dragSlot] = self.draggedItem
+    end
+    
+    -- Clear dragged state
+    self.draggedItem = nil
+    self.dragOrigin = nil
+    self.dragSlot = nil
+    
+    return true
+end
+
+function InventoryManager:isDragging()
+    return self.draggedItem ~= nil
+end
+
+function InventoryManager:getDraggedItem()
+    return self.draggedItem
+end
+
+return InventoryManager
+
+---
+
+folder debug
+
+---
+
+debugsystem.lua
+
+---
+
+local DebugSystem = {}
+
+local WorldDebugging = require("modules.debug.WorldDebugging")
+local Performance = require("modules.debug.Performance")
+
+DebugSystem.enabled = false
+DebugSystem.components = {
+    WorldDebugging,
+    Performance
+}
+
+-- Position and drag state
+DebugSystem.panelX = 0
+DebugSystem.panelY = 0
+DebugSystem.panelWidth = 0
+DebugSystem.panelHeight = 0
+DebugSystem.dragging = false
+DebugSystem.dragOffsetX = 0
+DebugSystem.dragOffsetY = 0
+
+function DebugSystem:init(world, camera)
+    for _, component in ipairs(self.components) do
+        if component.init then
+            component:init(world, camera)
+        end
+    end
+    
+    -- Load a smaller font for debug info
+    self.font = love.graphics.newFont(14)
+    
+    -- Initialize position to top right
+    local screenWidth = love.graphics.getWidth()
+    self.panelX = screenWidth - 220
+    self.panelY = 10
+end
+
+function DebugSystem:update(dt, world, camera)
+    if not self.enabled then return end
+    
+    for _, component in ipairs(self.components) do
+        if component.update then
+            component:update(dt, world, camera)
+        end
+    end
+    
+    -- Update position if dragging
+    if self.dragging then
+        local mx, my = love.mouse.getPosition()
+        self.panelX = mx - self.dragOffsetX
+        self.panelY = my - self.dragOffsetY
+        
+        -- Keep on screen
+        local screenWidth, screenHeight = love.graphics.getDimensions()
+        self.panelX = math.max(0, math.min(screenWidth - self.panelWidth, self.panelX))
+        self.panelY = math.max(0, math.min(screenHeight - self.panelHeight, self.panelY))
+    end
+end
+
+function DebugSystem:draw()
+    if not self.enabled then return end
+    
+    -- Use our custom font
+    local prevFont = love.graphics.getFont()
+    love.graphics.setFont(self.font)
+    
+    -- Calculate panel dimensions based on content
+    local screenWidth, screenHeight = love.graphics.getDimensions()
+    
+    -- Measure content first to determine panel size
+    local contentWidth = 0
+    local contentHeight = 0
+    local lineHeight = self.font:getHeight() + 5
+    
+    -- Title space
+    contentHeight = contentHeight + lineHeight * 1.2
+    
+    -- Virtual draw pass to measure content size
+    local tempY = 0
+    for _, component in ipairs(self.components) do
+        if component.measure then
+            local width, height = component:measure(self.font)
+            contentWidth = math.max(contentWidth, width)
+            contentHeight = contentHeight + height
+        else
+            -- Default measurement if component doesn't have a measure function
+            contentHeight = contentHeight + lineHeight * 3  -- Assume 3 lines per component
+            contentWidth = math.max(contentWidth, 160)
+        end
+    end
+    
+    -- Add padding
+    local padding = 15
+    self.panelWidth = contentWidth + padding * 2
+    self.panelHeight = contentHeight + padding * 2
+    local cornerRadius = 8
+    
+    -- Semi-transparent background
+    love.graphics.setColor(0, 0, 0, 0.7)
+    love.graphics.rectangle("fill", self.panelX, self.panelY, self.panelWidth, self.panelHeight, cornerRadius, cornerRadius)
+    love.graphics.setColor(1, 1, 1, 0.3)
+    love.graphics.rectangle("line", self.panelX, self.panelY, self.panelWidth, self.panelHeight, cornerRadius, cornerRadius)
+    
+    -- Title
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.print("Debug Information", self.panelX + padding, self.panelY + padding)
+    
+    -- Position for the first component
+    local textY = self.panelY + padding + lineHeight * 1.5
+    
+    -- Draw all debug components
+    for _, component in ipairs(self.components) do
+        if component.draw then
+            textY = component:draw(self.panelX + padding, textY, self.font)
+        end
+    end
+    
+    -- Restore previous font
+    love.graphics.setFont(prevFont)
+end
+
+function DebugSystem:mousepressed(x, y, button)
+    if not self.enabled then return false end
+    
+    if button == 1 then -- Left mouse button
+        -- Check if mouse is inside panel
+        if x >= self.panelX and x <= self.panelX + self.panelWidth and
+           y >= self.panelY and y <= self.panelY + self.panelHeight then
+            
+            self.dragging = true
+            self.dragOffsetX = x - self.panelX
+            self.dragOffsetY = y - self.panelY
+            return true
+        end
+    end
+    
+    return false
+end
+
+function DebugSystem:mousereleased(x, y, button)
+    if button == 1 then
+        self.dragging = false
+        return self.enabled -- Return true if the debug system is enabled
+    end
+    return false
+end
+
+function DebugSystem:toggle()
+    self.enabled = not self.enabled
+    return self.enabled
+end
+
+function DebugSystem:isEnabled()
+    return self.enabled
+end
+
+return DebugSystem
+
+---
+
+Performance.lua
+
+---
+
+local Performance = {
+    fps = 0,
+    resolution = "",
+    entityCount = 0,
+    updateInterval = 0.5,
+    timeSinceUpdate = 0
+}
+
+function Performance:init(world, camera)
+    self.resolution = love.graphics.getWidth() .. "x" .. love.graphics.getHeight()
+    -- For now we'll just count the player as 1 entity
+    self.entityCount = 1
+end
+
+function Performance:update(dt, world, camera)
+    self.timeSinceUpdate = self.timeSinceUpdate + dt
+    
+    if self.timeSinceUpdate >= self.updateInterval then
+        self.fps = love.timer.getFPS()
+        self.resolution = love.graphics.getWidth() .. "x" .. love.graphics.getHeight()
+        self.timeSinceUpdate = 0
+    end
+end
+
+function Performance:measure(font)
+    local texts = {
+        "FPS: " .. math.floor(self.fps),
+        "Resolution: " .. self.resolution,
+        "Entities: " .. self.entityCount
+    }
+    
+    local maxWidth = 0
+    for _, text in ipairs(texts) do
+        maxWidth = math.max(maxWidth, font:getWidth(text))
+    end
+    
+    local lineHeight = font:getHeight() + 5
+    local textHeight = lineHeight * #texts
+    
+    return maxWidth, textHeight
+end
+
+function Performance:draw(x, y, font)
+    love.graphics.setColor(1, 1, 1, 1)
+    
+    local lineHeight = font:getHeight() + 5
+    
+    love.graphics.print("FPS: " .. math.floor(self.fps), x, y)
+    love.graphics.print("Resolution: " .. self.resolution, x, y + lineHeight)
+    love.graphics.print("Entities: " .. self.entityCount, x, y + lineHeight * 2)
+    
+    return y + lineHeight * 3  -- Return the new Y position for the next component
+end
+
+return Performance
+
+---
+
+worlddebugging.lua
+
+---
+
+local WorldDebugging = {
+    world = nil
+}
+
+function WorldDebugging:init(world, camera)
+    self.world = world
+end
+
+function WorldDebugging:update(dt, world, camera)
+    self.world = world
+end
+
+function WorldDebugging:measure(font)
+    local textWidth = font:getWidth("Seed: " .. (self.world and self.world.seed or "?"))
+    local textHeight = font:getHeight() + 5
+    return textWidth, textHeight
+end
+
+function WorldDebugging:draw(x, y, font)
+    if not self.world then return y end
+    
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.print("Seed: " .. self.world.seed, x, y)
+    
+    return y + font:getHeight() + 8  -- Return the new Y position with padding
+end
+
+return WorldDebugging
+
+---
+
+main.lua
+
+---
+
+local Camera = require("modules.camera")
+local Player = require("modules.player")
+local World = require("modules.world")
+local DebugSystem = require("modules.debug.DebugSystem")
+local MenuSystem = require("modules.Menu.MenuSystem")
+local Hotbar = require("modules.InventorySystem.hotbar")
+local Backpack = require("modules.InventorySystem.Backpack")
+local InventoryManager = require("modules.InventorySystem.InventoryManager")
+local MiningSystem = require("modules.systems.MiningSystem")
+
+local WoodenPickaxe = require("modules.Items.WoodenPickaxe")
+
+local camera
+local player
+local world
+local debugSystem
+local menuSystem
+local inventoryManager
+local hotbar
+local backpack
+local miningSystem
+local screenWidth, screenHeight
+local currentSeed = math.random(1, 1000)
+
+function love.load()
+    love.window.setFullscreen(true)
+    screenWidth, screenHeight = love.graphics.getDimensions()
+    love.graphics.setBackgroundColor(0.4, 0.6, 0.9)
+    
+    world = World.new(1000, 1000, 30, currentSeed)
+    
+    camera = Camera.new()
+    camera:setWorldDimensions(world.width * world.tileSize, world.height * world.tileSize)
+    
+    local spawnX, spawnY = world:findSpawnPosition()
+    player = Player.new(spawnX, spawnY, 30)
+    
+    debugSystem = DebugSystem
+    debugSystem:init(world, camera)
+    
+    menuSystem = MenuSystem.new({})
+    
+    inventoryManager = InventoryManager.new()
+    hotbar = Hotbar.new(inventoryManager)
+    backpack = Backpack.new(inventoryManager)
+    
+    miningSystem = MiningSystem.new(world, camera, inventoryManager)
+    
+    inventoryManager:addItemToHotbar(WoodenPickaxe.new(), 1)
+end
+
+function resetPlayer()
+    local spawnX, spawnY = world:findSpawnPosition()
+    player.x = spawnX
+    player.y = spawnY
+    player.vx = 0
+    player.vy = 0
+end
+
+function generateNewWorld()
+    currentSeed = math.random(1, 10000)
+    world:changeSeed(currentSeed)
+    resetPlayer()
+end
+
+function love.update(dt)
+    if menuSystem.active then
+        menuSystem:update(dt)
+        return
+    end
+    
+    for i = 1, 9 do
+        if love.keyboard.isDown(tostring(i)) then
+            hotbar:selectSlot(i)
+            miningSystem:reset()
+        end
+    end
+    
+    if love.keyboard.isDown("r") then
+        resetPlayer()
+    end
+    
+    player:update(dt, world)
+    camera:follow(player.x + player.size/2, player.y + player.size/2)
+    camera:update(dt)
+    
+    debugSystem:update(dt, world, camera)
+    hotbar:update(dt)
+    backpack:update(dt)
+    
+    miningSystem:update(dt, hotbar:getSelectedSlot())
+    
+    if love.mouse.isDown(1) and not inventoryManager:isDragging() and not menuSystem.active and not backpack:isVisible() then
+        local mouseX, mouseY = love.mouse.getPosition()
+        local worldX, worldY = miningSystem:screenToWorldCoordinates(mouseX, mouseY)
+        local tileX, tileY = miningSystem:worldToTileCoordinates(worldX, worldY)
+        
+        miningSystem:startMining(tileX, tileY)
+    else
+        if miningSystem.active then
+            miningSystem:reset()
+        end
+    end
+end
+
+function love.draw()
+    camera:apply()
+    world:draw(camera)
+    player:draw()
+    miningSystem:draw()
+    camera:reset()
+    
+    debugSystem:draw()
+    hotbar:draw()
+    backpack:draw()
+    
+    if inventoryManager:isDragging() then
+        local mx, my = love.mouse.getPosition()
+        local draggedItem = inventoryManager:getDraggedItem()
+        if draggedItem then
+            draggedItem:draw(mx - hotbar.slotSize/2, my - hotbar.slotSize/2, hotbar.slotSize, 0.8)
+        end
+    end
+    
+    menuSystem:draw()
+end
+
+function love.wheelmoved(x, y)
+    if not menuSystem.active then
+        camera:zoom(y * 0.1)
+    end
+end
+
+function love.resize(w, h)
+    screenWidth, screenHeight = w, h
+end
+
+function love.keypressed(key)
+    if menuSystem:keypressed(key) then
+        return
+    end
+    
+    if key == "f3" then
+        debugSystem:toggle()
+    elseif key == "f4" then
+        generateNewWorld()
+    elseif key >= "1" and key <= "9" then
+        local slotNum = tonumber(key)
+        if slotNum then
+            hotbar:selectSlot(slotNum)
+            miningSystem:reset()
+        end
+    elseif key == "tab" then
+        backpack:toggle()
+        miningSystem:reset()
+    elseif key == "escape" and backpack:isVisible() then
+        backpack:toggle()
+        return true
+    elseif key == "escape" and inventoryManager:isDragging() then
+        inventoryManager:cancelDragging()
+        return true
+    end
+end
+
+function love.mousepressed(x, y, button)
+    if debugSystem:mousepressed(x, y, button) then
+        return
+    end
+    
+    if menuSystem.active then
+        menuSystem:mousepressed(x, y, button)
+        return
+    end
+    
+    if backpack:isVisible() then
+        if backpack:mousepressed(x, y, button) then
+            return
+        end
+    end
+    
+    local hotbarSlot = hotbar:getSlotAt(x, y)
+    if hotbarSlot and button == 1 then
+        inventoryManager:startDragging("hotbar", hotbarSlot)
+        return
+    end
+end
+
+function love.mousereleased(x, y, button)
+    if debugSystem:mousereleased(x, y, button) then
+        return
+    end
+    
+    if menuSystem.active then
+        menuSystem:mousereleased(x, y, button)
+        return
+    end
+    
+    if inventoryManager:isDragging() and button == 1 then
+        if backpack:isVisible() then
+            if backpack:mousereleased(x, y, button) then
+                return
+            end
+        end
+        
+        local hotbarSlot = hotbar:getSlotAt(x, y)
+        if hotbarSlot then
+            inventoryManager:endDragging("hotbar", hotbarSlot)
+            return
+        end
+        
+        inventoryManager:cancelDragging()
+    end
+    
+    if button == 1 and miningSystem.active then
+        miningSystem:reset()
+    end
+end
+
+function Hotbar:getSlotAt(x, y)
+    for i = 1, self.slots do
+        local scale = self.currentScale[i]
+        local scaledSize = self.slotSize * scale
+        local slotX = self.baseX + (i-1) * (self.slotSize + self.padding)
+        local slotY = self.baseY
+        
+        local adjustedX = slotX + (self.slotSize - scaledSize) / 2
+        local adjustedY = slotY + (self.slotSize - scaledSize) / 2
+        
+        if x >= adjustedX and x <= adjustedX + scaledSize and
+           y >= adjustedY and y <= adjustedY + scaledSize then
+            return i
+        end
+    end
+    return nil
+end
